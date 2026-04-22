@@ -17,7 +17,7 @@ router.post(
   upload.single('resume'),
   async (req, res) => {
     try {
-      const { jobId, coverLetter, phone } = req.body;
+      const { jobId, coverLetter, phone, department, location, experience } = req.body;
       const candidateId = req.candidateId;
 
       // 1. Validate job exists and is active
@@ -70,12 +70,15 @@ router.post(
 
       // 5. Push to ATS asynchronously (non-blocking — failures don't break the response)
       pushToATS({
-        applicationId: application.id,   // ← HR tool saves this for status sync
+        applicationId: application.id,
         jobTitle:      job.title,
         atsJobId:      job.atsJobId,
         candidateName: candidate.name,
         email:         candidate.email,
         phone:         phone || candidate.phone,
+        department:    department || job.team,
+        location:      location  || job.location,
+        experience:    experience ? `${experience} year(s)` : '',
         resumeUrl,
         coverLetter,
       }).catch((e) => console.error('HR tool push failed:', e.message));
@@ -89,6 +92,9 @@ router.post(
       sendHRNotification({
         name: candidate.name, email: candidate.email,
         phone: phone || candidate.phone, jobTitle: job.title,
+        department: department || job.team,
+        location:   location  || job.location,
+        experience: experience ? `${experience} year(s)` : 'Not specified',
         resumeUrl, coverLetter,
       }).catch((e) => console.error('HR notification failed:', e.message));
 

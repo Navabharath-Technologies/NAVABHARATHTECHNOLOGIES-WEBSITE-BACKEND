@@ -167,7 +167,7 @@ async function sendStatusEmail({ to, name, jobTitle, status, note }) {
 }
 
 // ── HR notification when candidate applies ──────────────────────────
-async function sendHRNotification({ name, email, phone, jobTitle, resumeUrl, coverLetter }) {
+async function sendHRNotification({ name, email, phone, jobTitle, department, location, experience, resumeUrl, coverLetter }) {
   const body = `
     <div style="margin-bottom:24px;">
       <div style="display:inline-block;background:#1a3c87;color:#fff;font-size:12px;font-weight:700;padding:4px 12px;border-radius:20px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">New Application</div>
@@ -176,10 +176,13 @@ async function sendHRNotification({ name, email, phone, jobTitle, resumeUrl, cov
     </div>
 
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;margin:0 0 24px;">
-      ${infoRow('Name',  name,  false)}
-      ${infoRow('Email', `<a href="mailto:${email}" style="color:#2563eb;text-decoration:none;">${email}</a>`, true)}
-      ${infoRow('Phone', phone || '<span style="color:#94a3b8;">Not provided</span>', false)}
-      ${infoRow('Role',  `<strong>${jobTitle}</strong>`, true)}
+      ${infoRow('Name',       name,  false)}
+      ${infoRow('Email',      `<a href="mailto:${email}" style="color:#2563eb;text-decoration:none;">${email}</a>`, true)}
+      ${infoRow('Phone',      phone || '<span style="color:#94a3b8;">Not provided</span>', false)}
+      ${infoRow('Department', department || '<span style="color:#94a3b8;">—</span>', true)}
+      ${infoRow('Location',   location   || '<span style="color:#94a3b8;">—</span>', false)}
+      ${infoRow('Experience', experience || '<span style="color:#94a3b8;">Not specified</span>', true)}
+      ${infoRow('Role',       `<strong>${jobTitle}</strong>`, false)}
     </table>
 
     ${coverLetter ? `
