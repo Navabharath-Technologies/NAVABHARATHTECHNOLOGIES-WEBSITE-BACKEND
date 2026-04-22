@@ -1,41 +1,43 @@
 {
     "name": "navabharath-technologies-backend",
-    "version": "1.0.0",
-    "description": "Backend server for Navabharath Technologies website with contact form and career application endpoints",
-    "main": "server.js",
+    "version": "2.0.0",
+    "description": "Production backend for Navabharath Technologies — careers portal, contact form, ATS webhook sync",
+    "main": "src/server.js",
     "scripts": {
-        "start": "node server.js",
-        "dev": "nodemon server.js"
+        "start": "node src/server.js",
+        "dev": "nodemon src/server.js",
+        "db:migrate": "npx prisma migrate deploy",
+        "db:generate": "npx prisma generate",
+        "db:studio": "npx prisma studio",
+        "postinstall": "npx prisma generate"
     },
-    "keywords": [
-        "express",
-        "resend",
-        "email",
-        "multer",
-        "file-upload"
-    ],
+    "keywords": ["express", "prisma", "postgresql", "resend", "multer", "jwt", "careers"],
     "author": "Navabharath Technologies",
     "license": "ISC",
     "dependencies": {
+        "@prisma/client": "^5.22.0",
+        "bcryptjs": "^2.4.3",
         "body-parser": "^1.20.2",
         "cors": "^2.8.5",
         "express": "^4.22.1",
+        "express-rate-limit": "^7.0.0",
+        "helmet": "^8.0.0",
+        "jsonwebtoken": "^9.0.0",
         "multer": "^1.4.5-lts.1",
-        "resend": "^3.0.0"
+        "pg-boss": "^9.0.0",
+        "resend": "^3.0.0",
+        "zod": "^3.22.0"
     },
     "devDependencies": {
-        "nodemon": "^3.0.1"
+        "nodemon": "^3.0.1",
+        "prisma": "^5.22.0"
     },
     "engines": {
-        "node": ">=14.0.0"
+        "node": ">=18.0.0"
     },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/Navabharth-Technologies/NAVABHARATHTECHNOLOGIES-WEBSITE-BACKEND.git"
     },
-    "type": "commonjs",
-    "bugs": {
-        "url": "https://github.com/Navabharth-Technologies/NAVABHARATHTECHNOLOGIES-WEBSITE-BACKEND/issues"
-    },
-    "homepage": "https://github.com/Navabharth-Technologies/NAVABHARATHTECHNOLOGIES-WEBSITE-BACKEND#readme"
+    "type": "commonjs"
 }
