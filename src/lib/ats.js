@@ -1,54 +1,72 @@
 /**
- * ATS (Applicant Tracking System) Integration
- *
- * Replace the fetch logic below with the actual API of your HR tool:
- *   - Zoho Recruit: https://www.zoho.com/recruit/developer-guide/apiv2/
- *   - Freshteam:    https://developers.freshteam.com/api/#candidates
- *   - Custom ATS:   adjust endpoint and payload as needed
- *
- * Returns atsAppId on success, null on failure (graceful degradation).
+ * ATS Push — sends new applications to the HR internal tool
+ * Env vars required on Render:
+ *   ATS_WEBHOOK_URL  — full URL of your HR tool's incoming endpoint
+ *                      e.g. https://your-hr-tool.com/webhooks/nbt/application
+ *   ATS_WEBHOOK_SECRET — shared HMAC secret (same on both sides)
  */
-async function pushToATS({ jobTitle, candidateName, email, phone, resumeUrl, coverLetter, atsJobId }) {
-  const ATS_API_URL = process.env.ATS_API_URL;
-  const ATS_API_KEY = process.env.ATS_API_KEY;
 
-  if (!ATS_API_URL || !ATS_API_KEY) {
-    console.warn('⚠️  ATS integration not configured — skipping sync (set ATS_API_URL + ATS_API_KEY)');
+const crypto = require('crypto');
+
+async function pushToATS({
+  applicationId,  // Our DB application UUID — HR tool must save this for status updates
+  jobTitle,
+  atsJobId,
+  candidateName,
+  email,
+  phone,
+  resumeUrl,
+  coverLetter,
+}) {
+  const ATS_WEBHOOK_URL    = process.env.ATS_WEBHOOK_URL;
+  const ATS_WEBHOOK_SECRET = process.env.ATS_WEBHOOK_SECRET;
+
+  if (!ATS_WEBHOOK_URL) {
+    console.warn('⚠️  ATS_WEBHOOK_URL not set — skipping HR tool sync');
     return null;
   }
 
+  const payload = JSON.stringify({
+    source:                 'navabharathtechnologies-website',
+    websiteApplicationId:   applicationId,   // ← HR tool saves this for status updates
+    candidateName,
+    email,
+    phone:                  phone || '',
+    jobTitle,
+    atsJobId:               atsJobId || null,
+    resumeUrl,
+    coverLetter:            coverLetter || '',
+    appliedAt:              new Date().toISOString(),
+  });
+
+  // Sign with HMAC if secret is configured
+  const headers = { 'Content-Type': 'application/json' };
+  if (ATS_WEBHOOK_SECRET) {
+    headers['x-ats-signature'] = crypto
+      .createHmac('sha256', ATS_WEBHOOK_SECRET)
+      .update(payload)
+      .digest('hex');
+  }
+
   try {
-    const response = await fetch(`${ATS_API_URL}/applications`, {
-      method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${ATS_API_KEY}`,
-      },
-      body: JSON.stringify({
-        jobId:      atsJobId,
-        candidate: {
-          name:  candidateName,
-          email,
-          phone: phone || '',
-        },
-        resumeUrl,
-        coverLetter: coverLetter || '',
-      }),
-      signal: AbortSignal.timeout(10_000), // 10-second timeout
+    const response = await fetch(ATS_WEBHOOK_URL, {
+      method:  'POST',
+      headers,
+      body:    payload,
+      signal:  AbortSignal.timeout(15_000), // 15s timeout
     });
 
     if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`ATS returned ${response.status}: ${body}`);
+      const text = await response.text();
+      throw new Error(`HR tool returned ${response.status}: ${text}`);
     }
 
-    const data = await response.json();
-    console.log(`✔ Application pushed to ATS — atsAppId: ${data.id}`);
-    return data.id; // Save this as application.atsAppId
+    console.log(`✅ Application pushed to HR tool — websiteApplicationId: ${applicationId}`);
+    return applicationId;
 
   } catch (err) {
-    // Non-fatal: the application is already saved locally. ATS sync can be retried manually.
-    console.error('❌ ATS push failed (non-fatal):', err.message);
+    // Non-fatal: application is saved in our DB. HR team still gets email notification.
+    console.error('❌ HR tool push failed (non-fatal):', err.message);
     return null;
   }
 }

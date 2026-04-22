@@ -70,20 +70,15 @@ router.post(
 
       // 5. Push to ATS asynchronously (non-blocking — failures don't break the response)
       pushToATS({
+        applicationId: application.id,   // ← HR tool saves this for status sync
         jobTitle:      job.title,
+        atsJobId:      job.atsJobId,
         candidateName: candidate.name,
         email:         candidate.email,
-        phone:         candidate.phone,
+        phone:         phone || candidate.phone,
         resumeUrl,
         coverLetter,
-        atsJobId:      job.atsJobId,
-      }).then((atsAppId) => {
-        if (atsAppId) {
-          prisma.application
-            .update({ where: { id: application.id }, data: { atsAppId } })
-            .catch((e) => console.error('Failed to save atsAppId:', e.message));
-        }
-      });
+      }).catch((e) => console.error('HR tool push failed:', e.message));
 
       // 6. Send emails asynchronously (non-blocking)
       sendApplicationConfirmation({
