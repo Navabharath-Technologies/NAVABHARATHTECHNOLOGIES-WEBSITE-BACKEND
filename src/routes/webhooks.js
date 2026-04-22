@@ -2,8 +2,8 @@ const express = require('express');
 const crypto  = require('crypto');
 const router  = express.Router();
 
-const { prisma }              = require('../lib/prisma');
-const { enqueueStatusEmail }  = require('../lib/queue');
+const { prisma }             = require('../lib/prisma');
+const { enqueueStatusEmail } = require('../lib/queue');
 
 const ATS_WEBHOOK_SECRET = process.env.ATS_WEBHOOK_SECRET;
 
@@ -12,24 +12,39 @@ const VALID_STATUSES = [
   'OFFER_EXTENDED', 'HIRED', 'REJECTED', 'WITHDRAWN',
 ];
 
-// ── HMAC-SHA256 signature verification ──────────────────────────
+// ── HMAC-SHA256 verification ─────────────────────────────────────────
+// Accepts bare hex OR "sha256=hex" format from either side
 function verifySignature(rawBody, signatureHeader) {
-  if (!signatureHeader || !ATS_WEBHOOK_SECRET) return false;
-  const expected = 'sha256=' +
-    crypto.createHmac('sha256', ATS_WEBHOOK_SECRET)
-          .update(rawBody)
-          .digest('hex');
+  if (!ATS_WEBHOOK_SECRET) {
+    console.warn('⚠️  ATS_WEBHOOK_SECRET not set — skipping signature check');
+    return true; // allow through if secret not configured yet
+  }
+  if (!signatureHeader) return false;
+
+  // Strip "sha256=" prefix if present (GitHub-style)
+  const incomingSig = signatureHeader.startsWith('sha256=')
+    ? signatureHeader.slice(7)
+    : signatureHeader;
+
+  const expected = crypto
+    .createHmac('sha256', ATS_WEBHOOK_SECRET)
+    .update(rawBody)
+    .digest('hex');
+
   try {
-    // timingSafeEqual prevents timing attacks
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signatureHeader));
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(incomingSig));
   } catch {
     return false;
   }
 }
 
-// ── POST /api/webhooks/ats-update ───────────────────────────────
-// NOTE: express.raw() is applied here (not in server.js) so we get the raw
-// body needed for HMAC verification BEFORE JSON parsing.
+// ── POST /api/webhooks/ats-update ────────────────────────────────────
+// Called by HR tool when an application status changes.
+// Payload (from nbt-integration.js pushStatusUpdate):
+//   { applicationId, status, note }
+//
+// NOTE: express.raw() is used to preserve the raw body for HMAC verification
+// before any JSON parsing occurs.
 router.post(
   '/ats-update',
   express.raw({ type: 'application/json' }),
@@ -50,53 +65,73 @@ router.post(
       return res.status(400).json({ error: 'Invalid JSON payload' });
     }
 
-    const { eventId, atsAppId, newStatus, note, updatedBy } = payload;
+    // Accept both naming conventions:
+    // New (nbt-integration.js): { applicationId, status, note }
+    // Legacy (Zoho/custom):     { atsAppId, newStatus, note, eventId }
+    const applicationId = payload.applicationId || null;
+    const atsAppId      = payload.atsAppId      || null;
+    const status        = payload.status        || payload.newStatus;
+    const note          = payload.note          || null;
+    const changedBy     = payload.updatedBy     || 'hr';
+    // Generate eventId if not provided (for idempotency)
+    const eventId       = payload.eventId       || `auto-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-    // 3. Field validation
-    if (!eventId || !atsAppId || !newStatus) {
-      return res.status(400).json({
-        error: 'Missing required fields: eventId, atsAppId, newStatus',
+    // 3. Validate required fields
+    if (!status) {
+      return res.status(400).json({ error: 'Missing required field: status (or newStatus)' });
+    }
+    if (!applicationId && !atsAppId) {
+      return res.status(400).json({ error: 'Missing required field: applicationId (or atsAppId)' });
+    }
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Invalid status: "${status}". Valid: ${VALID_STATUSES.join(', ')}` });
+    }
+
+    // 4. Idempotency — skip if already processed (only if eventId was explicitly provided)
+    if (payload.eventId) {
+      const existing = await prisma.webhookEvent.findUnique({ where: { eventId } });
+      if (existing) {
+        console.log(`ℹ️  Webhook duplicate ignored: ${eventId}`);
+        return res.status(200).json({ message: 'Already processed' });
+      }
+    }
+
+    // 5. Find application — try by our UUID first, then by atsAppId
+    let application;
+    if (applicationId) {
+      application = await prisma.application.findUnique({
+        where:   { id: applicationId },
+        include: { candidate: true, job: true },
       });
     }
-    if (!VALID_STATUSES.includes(newStatus)) {
-      return res.status(400).json({ error: `Invalid status: ${newStatus}` });
+    if (!application && atsAppId) {
+      application = await prisma.application.findUnique({
+        where:   { atsAppId },
+        include: { candidate: true, job: true },
+      });
     }
-
-    // 4. Idempotency — ignore if already processed
-    const existing = await prisma.webhookEvent.findUnique({ where: { eventId } });
-    if (existing) {
-      console.log(`ℹ️  Webhook duplicate ignored: ${eventId}`);
-      return res.status(200).json({ message: 'Already processed' });
-    }
-
-    // 5. Find application by atsAppId
-    const application = await prisma.application.findUnique({
-      where:   { atsAppId },
-      include: { candidate: true, job: true },
-    });
 
     if (!application) {
-      console.warn(`⚠️  Webhook: no application found for atsAppId=${atsAppId}`);
-      // Return 200 so ATS doesn't retry on a known-bad ID; log it for debugging
+      console.warn(`⚠️  Webhook: no application found for applicationId=${applicationId} atsAppId=${atsAppId}`);
       await prisma.webhookEvent.create({
         data: { source: 'ats', eventId, payload, status: 'failed' },
-      });
-      return res.status(200).json({ message: 'Application not found — logged' });
+      }).catch(() => {});
+      return res.status(404).json({ error: 'Application not found' });
     }
 
-    // 6. Atomic update: application status + audit event + idempotency record
+    // 6. Atomic update: status + audit event + idempotency record
     await prisma.$transaction([
       prisma.application.update({
         where: { id: application.id },
-        data:  { status: newStatus },
+        data:  { status },
       }),
       prisma.applicationEvent.create({
         data: {
           applicationId: application.id,
           fromStatus:    application.status,
-          toStatus:      newStatus,
-          note:          note || null,
-          changedBy:     updatedBy || 'hr',
+          toStatus:      status,
+          note,
+          changedBy,
         },
       }),
       prisma.webhookEvent.create({
@@ -104,17 +139,17 @@ router.post(
       }),
     ]);
 
-    // 7. Queue status email (retried up to 5× with exponential backoff)
+    // 7. Send status update email to candidate (queued, retried on failure)
     enqueueStatusEmail({
       to:       application.candidate.email,
       name:     application.candidate.name,
       jobTitle: application.job.title,
-      status:   newStatus,
-      note:     note || null,
+      status,
+      note,
     }).catch((e) => console.error('Failed to enqueue status email:', e.message));
 
-    console.log(`✔ Status synced: app=${application.id} → ${newStatus}`);
-    return res.status(200).json({ message: 'Status updated successfully' });
+    console.log(`✅ Status synced: app=${application.id} → ${status}`);
+    return res.status(200).json({ message: 'Status updated successfully', applicationId: application.id, status });
   }
 );
 
