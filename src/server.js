@@ -26,18 +26,28 @@ app.use(helmet());
 
 // ── CORS ────────────────────────────────────────────────────────
 const allowedOrigins = [
+  // Production domains — add all variants
   'https://www.navabharathtechnologies.com',
   'https://navabharathtechnologies.com',
-  // Allow localhost in development
-  ...(process.env.NODE_ENV !== 'production'
-    ? ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:3001']
-    : []),
+  'https://www.navabharathtechnologies.in',
+  'https://navabharathtechnologies.in',
+  // Development — localhost servers
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (e.g., Postman, server-to-server)
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    // Allow:
+    // 1. Requests with no origin (Postman, server-to-server, mobile apps)
+    // 2. null origin (file:// — opening HTML directly from filesystem)
+    // 3. Origins in our whitelist
+    if (!origin || origin === 'null' || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
