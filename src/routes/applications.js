@@ -17,7 +17,7 @@ router.post(
   upload.single('resume'),
   async (req, res) => {
     try {
-      const { jobId, coverLetter } = req.body;
+      const { jobId, coverLetter, phone } = req.body;
       const candidateId = req.candidateId;
 
       // 1. Validate job exists and is active
@@ -40,7 +40,15 @@ router.post(
       }
 
       const resumeUrl = getResumeUrl(req.file.filename);
-      const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
+      let candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
+
+      // Save phone to candidate record if provided and not already set
+      if (phone && !candidate.phone) {
+        candidate = await prisma.candidate.update({
+          where: { id: candidateId },
+          data:  { phone },
+        });
+      }
 
       // 4. Create application + initial audit event (atomic)
       const application = await prisma.application.create({
@@ -85,7 +93,7 @@ router.post(
 
       sendHRNotification({
         name: candidate.name, email: candidate.email,
-        phone: candidate.phone, jobTitle: job.title,
+        phone: phone || candidate.phone, jobTitle: job.title,
         resumeUrl, coverLetter,
       }).catch((e) => console.error('HR notification failed:', e.message));
 
